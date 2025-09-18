@@ -147,13 +147,12 @@ jobs:
               }
             }
 
-      - name: 🎁 创建全新 Release
+      - name: 🎁 创建 Release 并上传所有文件（一步到位！）
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: wukong-amd64-release  # 固定 Tag，方便收藏
+          tag_name: wukong-amd64-release
           name: ${{ env.RELEASE_TITLE }}
-          body: |
-            
+          body: |            
             ### 📥 内网导入方法
             1. 下载本 Release 下所有 `*.part_*` 文件和 `merge.sh`
             2. 放在同一目录下
@@ -162,7 +161,6 @@ jobs:
                chmod +x merge.sh
                ./merge.sh
                ```
-            
 
             ### 📦 本次打包镜像
             ```
@@ -170,12 +168,7 @@ jobs:
             ```
           draft: false
           prerelease: false
-
-      - name: ⬆️ 上传分卷文件和合并脚本
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: wukong-amd64-release
-          files: |
+          files: |  # 👈 关键：在这里直接指定要上传的文件！
             *.part_*
             merge.sh
-          overwrite_files: true  # 覆盖同名分卷文件
+          overwrite_files: true  # 覆盖同名文件
