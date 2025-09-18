@@ -85,23 +85,24 @@ jobs:
           ls -lh "$FILE.part_"*
           
           # 生成合并脚本
-          cat > merge.sh << 'EOF'
-#!/bin/bash
-
-echo "🔄 正在合并分卷..."
-cat *.part_* > image.tar.gz
-echo "✅ 合并完成！"
-
-echo "🐳 正在导入 Docker..."
-docker load -i image.tar.gz
-
-if [ $? -eq 0 ]; then
-  echo "🎉 导入成功！"
-  echo "📚 教程与支持：https://wkdaily.cpolar.top/archives/1"
-else
-  echo "❌ 导入失败，请检查文件完整性。"
-fi
-EOF
+          echo '#!/bin/bash' > merge.sh
+          echo '# 🐒 悟空的日常 - 镜像分卷合并脚本' >> merge.sh
+          echo '# 许可协议：CC BY-NC-SA 4.0' >> merge.sh
+          echo '' >> merge.sh
+          echo 'echo "🔄 正在合并分卷..."' >> merge.sh
+          echo 'cat *.part_* > image.tar.gz' >> merge.sh
+          echo 'echo "✅ 合并完成！"' >> merge.sh
+          echo '' >> merge.sh
+          echo 'echo "🐳 正在导入 Docker..."' >> merge.sh
+          echo 'docker load -i image.tar.gz' >> merge.sh
+          echo '' >> merge.sh
+          echo 'if [ $? -eq 0 ]; then' >> merge.sh
+          echo '  echo "🎉 导入成功！"' >> merge.sh
+          echo '  echo "📚 教程与支持：https://wkdaily.cpolar.top/archives/1"' >> merge.sh
+          echo 'else' >> merge.sh
+          echo '  echo "❌ 导入失败，请检查文件完整性。"' >> merge.sh
+          echo 'fi' >> merge.sh
+          chmod +x merge.sh
           chmod +x merge.sh
           echo "📄 合并脚本已生成: merge.sh"
 
