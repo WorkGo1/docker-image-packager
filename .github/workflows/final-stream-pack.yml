@@ -1,0 +1,153 @@
+name: 🚀 终极版：流式打包超大 Docker 镜像（固定 Release）
+
+on:
+  workflow_dispatch:
+    inputs:
+      docker_images:
+        description: '填写镜像名，多个用英文逗号分隔（推荐一次一个超大镜像）'
+        required: true
+        default: 'quay.io/docling-project/docling-serve'
+
+jobs:
+  pack_huge_images:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write  # 必须权限，用于删除/创建 Release 和 Tag
+
+    steps:
+      - name: 📂 Checkout 代码
+        uses: actions/checkout@v4
+
+      - name: 💾 检查初始磁盘空间
+        run: df -h .
+
+      - name: 🧰 安装 Skopeo 工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: 🌊 流式拉取+压缩（不占磁盘！）
+        run: |
+          images="${{ github.event.inputs.docker_images }}"
+          IFS=',' read -r -a image_array <<< "$images"
+          
+          for image in "${image_array[@]}"; do
+            image=$(echo "$image" | xargs)  # 去除首尾空格
+            [[ -z "$image" ]] && continue
+            
+            echo "→ 开始处理: $image"
+            # 生成安全文件名（替换 / 和 :）
+            safe_name="${image//\//_}"
+            safe_name="${safe_name//:/_}"
+            filename="${safe_name}-amd64.tar.gz"
+            
+            # ⭐ 核心：流式处理，直接输出到 gzip，不写中间文件
+            skopeo copy \
+              --override-arch amd64 \
+              --retry-times 3 \
+              "docker://$image" \
+              "docker-archive:/dev/stdout" | gzip -9 > "$filename"
+            
+            echo "✓ 打包成功: $filename"
+            ls -lh "$filename"
+          done
+
+      - name: 💾 检查打包后磁盘空间
+        run: df -h .
+
+      - name: 📋 记录生成的文件列表
+        id: list_files
+        run: |
+          files=$(find . -maxdepth 1 -name "*.tar.gz" -printf "%f\n" | sort)
+          if [[ -z "$files" ]]; then
+            echo "❌ 错误：未生成任何镜像包！"
+            exit 1
+          fi
+          echo "生成文件列表:"
+          echo "$files"
+          
+          # 保存到环境变量，供后续步骤使用
+          echo "FILES<<EOF" >> $GITHUB_ENV
+          echo "$files" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          # 生成带时间的 Release 标题
+          release_title="📦 悟空镜像包 • $(TZ='Asia/Shanghai' date +'%Y年%m月%d日 %H:%M')"
+          echo "RELEASE_TITLE=$release_title" >> $GITHUB_ENV
+
+      - name: 🗑️【关键】彻底删除旧 Release 和 Tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const TAG_NAME = 'wukong-amd64-release';
+            const { owner, repo } = context.repo;
+            
+            try {
+              // 1. 尝试获取旧 Release
+              const release = await github.rest.repos.getReleaseByTag({
+                owner, repo, tag: TAG_NAME
+              });
+              
+              // 2. 删除旧 Release
+              await github.rest.repos.deleteRelease({
+                owner, repo, release_id: release.data.id
+              });
+              console.log('✅ 旧 Release 已删除');
+              
+            } catch (error) {
+              if (error.status === 404) {
+                console.log('ℹ️ 未找到旧 Release，跳过删除');
+              } else {
+                console.error('⚠️ 删除 Release 失败:', error);
+                // 不中断流程
+              }
+            }
+            
+            try {
+              // 3. 删除旧 Tag（确保完全干净）
+              await github.rest.git.deleteRef({
+                owner, repo, ref: 'tags/' + TAG_NAME
+              });
+              console.log('✅ 旧 Tag 已删除');
+            } catch (error) {
+              if (error.status === 422 && error.message.includes('Reference does not exist')) {
+                console.log('ℹ️ 旧 Tag 不存在，跳过删除');
+              } else {
+                console.error('⚠️ 删除 Tag 失败:', error);
+              }
+            }
+
+      - name: 🎁 创建全新 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: wukong-amd64-release  # 固定 Tag，方便收藏
+          name: ${{ env.RELEASE_TITLE }}
+          body: |
+            [![悟空的日常](https://img.shields.io/badge/RELEASE%20%20:%E6%82%9F%E7%A9%BA%E9%95%9C%E5%83%8F%E5%8C%85-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
+            [![国内加速下载](https://img.shields.io/badge/%E5%9B%BD%E5%86%85%E5%8A%A0%E9%80%9F%E4%B8%8B%E8%BD%BD-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
+            
+            ### 📥 导入内网使用方法
+            ```bash
+            # 推荐方式（自动解压导入）
+            docker load -i your-image.tar.gz
+            
+            # 或手动解压后导入
+            gunzip -c your-image.tar.gz | docker load
+            ```
+
+            ### 📺 教学视频
+            [![Bilibili 教程](https://img.shields.io/badge/Bilibili-%E7%82%B9%E5%87%BB%E8%A7%82%E7%9C%8B-FB7299?logo=bilibili&logoColor=fff&style=for-the-badge)](https://www.bilibili.com/video/BV1yyq6YREdF)
+
+            ### 📦 本次打包包含镜像
+            ```
+            ${{ env.FILES }}
+            ```
+          draft: false
+          prerelease: false
+
+      - name: ⬆️ 上传镜像包到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: wukong-amd64-release
+          files: '*.tar.gz'
+          overwrite: true  # 覆盖同名文件（双重保险）
