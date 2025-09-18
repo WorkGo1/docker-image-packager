@@ -1,0 +1,122 @@
+name: 🐳 Get AMD64 Docker Images for Linux x86_64 (Ubuntu 22.04)
+
+on:
+  workflow_dispatch:
+    inputs:
+      docker_images:
+        description: '填写镜像名，多个用英文逗号分隔（如 alpine:latest,nginx:alpine）'
+        required: true
+        default: 'alpine:latest,alpine/curl,busybox:stable-glibc'
+
+jobs:
+  pull_and_package:
+    runs-on: ubuntu-22.04  # ✅ 明确指定 Ubuntu 22.04
+    permissions:
+      contents: write  # 必须权限，用于创建/更新 Release
+
+    steps:
+      - name: 📂 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐳 Pull & Package Images (linux/amd64)
+        run: |
+          # 设置平台环境变量
+          export DOCKER_DEFAULT_PLATFORM=linux/amd64
+          images="${{ github.event.inputs.docker_images }}"
+          IFS=',' read -r -a image_array <<< "$images"
+          
+          echo "=== 开始拉取以下镜像（x86_64架构）==="
+          for image in "${image_array[@]}"; do
+            echo "→ 拉取: $image"
+            docker pull "$image" --platform "linux/amd64"
+          done
+          
+          echo "=== 开始打包 ==="
+          for image in "${image_array[@]}"; do
+            # 生成安全文件名：替换 / 和 : 为 _
+            safe_name="${image//\//_}"
+            safe_name="${safe_name//:/_}"
+            filename="${safe_name}-amd64"
+            
+            echo "→ 打包: $image → $filename.tar.gz"
+            docker save "$image" -o "${filename}.tar"
+            gzip -9 "${filename}.tar"  # 最高压缩
+            # tar.gz 自动生成，原 tar 文件已压缩无需保留
+          done
+
+      - name: 📋 列出生成的文件
+        id: list_files
+        run: |
+          echo "=== 生成的镜像包 ==="
+          files=$(find . -name "*.tar.gz" -printf "%f\n" | sort)
+          echo "$files"
+          echo "FILES<<EOF" >> $GITHUB_ENV
+          echo "$files" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          # 生成带时区的 Release 名称
+          release_name="📦 Docker Images for x86_64 • $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M')"
+          echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
+
+      - name: 🚫 删除旧 Release 资产（避免重复）
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = 'fixed-amd64-release';
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag
+              });
+              const assets = await github.rest.repos.listReleaseAssets({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.data.id
+              });
+              for (const asset of assets.data) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: asset.id
+                });
+                console.log(`🗑️ 删除旧资产: ${asset.name}`);
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              console.log('未找到旧 Release，将创建新 Release');
+            }
+
+      - name: 🎁 创建/更新 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fixed-amd64-release  # 固定标签，方便你记住下载地址
+          name: ${{ env.RELEASE_NAME }}
+          body: |
+            [![Github](https://img.shields.io/badge/RELEASE%20%20:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL)
+            [![国内加速站](https://img.shields.io/badge/%E5%9B%BD%E5%86%85%E5%8A%A0%E9%80%9F%E7%AB%99%E4%B8%8B%E8%BD%BD-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
+            
+            ### 📥 如何使用？
+            ```bash
+            gunzip -c your-image.tar.gz | docker load
+            # 或
+            docker load -i your-image.tar.gz
+            ```
+
+            ### 📺 教学视频
+            [![Bilibili](https://img.shields.io/badge/Bilibili-%E7%82%B9%E5%87%BB%E8%A7%82%E7%9C%8B-FB7299?logo=bilibili&logoColor=fff&style=for-the-badge)](https://www.bilibili.com/video/BV1yyq6YREdF)
+
+            ### 📦 本次包含镜像：
+            ```
+            ${{ env.FILES }}
+            ```
+          draft: false
+          prerelease: false
+
+      - name: ⬆️ 上传新资产
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fixed-amd64-release
+          files: |
+            *.tar.gz
+          append_body: false  # 不追加，使用上面定义的完整 body
