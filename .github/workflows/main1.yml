@@ -1,0 +1,19 @@
+- name: 🐳 使用 Skopeo 保存镜像（推荐！省空间）
+  run: |
+    sudo apt-get update && sudo apt-get install -y skopeo
+    images="${{ github.event.inputs.docker_images }}"
+    IFS=',' read -r -a image_array <<< "$images"
+    
+    for image in "${image_array[@]}"; do
+      safe_name="${image//\//_}"
+      safe_name="${safe_name//:/_}"
+      filename="${safe_name}-amd64"
+      
+      echo "→ 保存: $image"
+      skopeo copy \
+        --override-arch amd64 \
+        "docker://$image" \
+        "docker-archive:${filename}.tar"
+      
+      gzip -9 "${filename}.tar" && rm "${filename}.tar"
+    done
