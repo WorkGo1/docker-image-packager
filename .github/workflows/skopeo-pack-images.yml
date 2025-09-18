@@ -1,0 +1,143 @@
+name: 🚀 Skopeo 打包任意 Docker 镜像（支持超大镜像）
+
+on:
+  workflow_dispatch:
+    inputs:
+      docker_images:
+        description: '填写镜像名，多个用英文逗号分隔（如 nginx:alpine,quay.io/docling-project/docling-serve）'
+        required: true
+        default: 'alpine:latest,busybox:stable'
+
+jobs:
+  pack_with_skopeo:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📂 Checkout
+        uses: actions/checkout@v4
+
+      - name: 💾 检查磁盘空间（调试用）
+        run: df -h /tmp
+
+      - name: 🧰 安装 Skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: 🐳 使用 Skopeo 拉取并打包镜像（不经过 Docker，省空间！）
+        run: |
+          images="${{ github.event.inputs.docker_images }}"
+          IFS=',' read -r -a image_array <<< "$images"
+          
+          echo "=== 开始打包以下镜像（linux/amd64）==="
+          for image in "${image_array[@]}"; do
+            # 清理镜像名中的空格
+            image=$(echo "$image" | xargs)
+            if [[ -z "$image" ]]; then continue; fi
+            
+            echo "→ 处理镜像: $image"
+            
+            # 生成安全文件名（替换 / 和 : 为 _）
+            safe_name="${image//\//_}"
+            safe_name="${safe_name//:/_}"
+            filename="${safe_name}-amd64"
+            
+            # 使用 skopeo 直接复制到 tar 文件（跳过 Docker daemon）
+            skopeo copy \
+              --override-arch amd64 \
+              --retry-times 3 \
+              "docker://$image" \
+              "docker-archive:${filename}.tar"
+            
+            # 压缩并清理原文件
+            gzip -9 "${filename}.tar"
+            echo "✓ 打包完成: ${filename}.tar.gz"
+            
+            # 显示文件大小
+            ls -lh "${filename}.tar.gz"
+          done
+
+      - name: 📋 列出所有生成的 .tar.gz 文件
+        id: list_files
+        run: |
+          echo "=== 生成的镜像包列表 ==="
+          files=$(find . -maxdepth 1 -name "*.tar.gz" -printf "%f\n" | sort)
+          if [[ -z "$files" ]]; then
+            echo "❌ 未生成任何文件！"
+            exit 1
+          fi
+          echo "$files"
+          echo "FILES<<EOF" >> $GITHUB_ENV
+          echo "$files" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          # 生成带时区的 Release 名称
+          release_name="📦 Skopeo 打包 • $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M')"
+          echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
+
+      - name: 🚫 删除旧 Release 资产
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = 'skopeo-amd64-release';
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag
+              });
+              const assets = await github.rest.repos.listReleaseAssets({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.data.id
+              });
+              for (const asset of assets.data) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: asset.id
+                });
+                console.log(`🗑️ 删除旧资产: ${asset.name}`);
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              console.log('ℹ️ 未找到旧 Release，将创建新 Release');
+            }
+
+      - name: 🎁 创建/更新 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: skopeo-amd64-release
+          name: ${{ env.RELEASE_NAME }}
+          body: |
+            [![Github](https://img.shields.io/badge/RELEASE%20%20:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL)
+            [![国内加速站](https://img.shields.io/badge/%E5%9B%BD%E5%86%85%E5%8A%A0%E9%80%9F%E7%AB%99%E4%B8%8B%E8%BD%BD-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
+            
+            ### 📥 如何使用？
+            ```bash
+            # 方法1：先解压再导入
+            gunzip -c your-image.tar.gz | docker load
+            
+            # 方法2：直接导入（Docker 20.10+ 支持）
+            docker load -i your-image.tar.gz
+            ```
+
+            ### 📺 教学视频
+            [![Bilibili](https://img.shields.io/badge/Bilibili-%E7%82%B9%E5%87%BB%E8%A7%82%E7%9C%8B-FB7299?logo=bilibili&logoColor=fff&style=for-the-badge)](https://www.bilibili.com/video/BV1yyq6YREdF)
+
+            ### 📦 本次包含镜像：
+            ```
+            ${{ env.FILES }}
+            ```
+          draft: false
+          prerelease: false
+
+      - name: ⬆️ 上传新资产
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: skopeo-amd64-release
+          files: |
+            *.tar.gz
+          append_body: false
